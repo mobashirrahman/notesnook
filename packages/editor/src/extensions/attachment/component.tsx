@@ -29,7 +29,7 @@ import { formatBytes } from "@notesnook/common";
 
 export function AttachmentComponent(props: ReactNodeViewProps<FileAttachment>) {
   const { editor, node, selected } = props;
-  const { filename, size, progress } = node.attrs;
+  const { filename, size, progress, mime, hash } = node.attrs;
   const elementRef = useRef<HTMLSpanElement>();
   const [isDragging, setIsDragging] = useState(false);
 
@@ -59,6 +59,20 @@ export function AttachmentComponent(props: ReactNodeViewProps<FileAttachment>) {
       title={filename}
       onDragStart={() => setIsDragging(true)}
       onDragEnd={() => setIsDragging(false)}
+      onDoubleClick={() => {
+        // `mime` may be empty; isPDF falls back to the filename in that case.
+        if (!hash || !filename || !size) return;
+        // Only PDFs are previewable; other file types keep their existing
+        // behaviour (select, then use the toolbar or context menu).
+        if (!isPDF(mime, filename)) return;
+        editor.storage.previewAttachment?.({
+          type: "file",
+          hash,
+          filename,
+          mime,
+          size
+        });
+      }}
       data-drag-handle
     >
       <Icon path={Icons.attachment} size={14} />
@@ -111,4 +125,9 @@ export function AttachmentComponent(props: ReactNodeViewProps<FileAttachment>) {
       </DesktopOnly>
     </Box>
   );
+}
+
+function isPDF(mime?: string, filename?: string) {
+  if (mime) return mime.startsWith("application/pdf");
+  return filename?.toLowerCase().endsWith(".pdf") || false;
 }

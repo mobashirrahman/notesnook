@@ -1,0 +1,116 @@
+name: Build desktop (self-hosted)
+
+# Manual-only. Produces unsigned installers for personal use against a
+# self-hosted Notesnook server. Uses no repository secrets and publishes
+# nothing, so it is safe to run from a fork.
+on:
+  workflow_dispatch:
+    inputs:
+      build-mac:
+        type: boolean
+        required: true
+        default: true
+        description: "Build the macOS dmg (unsigned, arm64)?"
+      build-linux:
+        type: boolean
+        required: true
+        default: true
+        description: "Build the Linux AppImage + deb (x64)?"
+
+jobs:
+  linux:
+    name: Build Linux x64
+    if: inputs['build-linux']
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: ./.github/actions/setup-node-with-cache
+
+      - name: Install packages
+        run: |
+          npm ci --ignore-scripts --prefer-offline --no-audit
+          npm run bootstrap -- --scope=desktop
+          npm run bootstrap -- --scope=web
+
+      - name: Install sqlite-better-trigram for x64
+        run: |
+          npm i --cpu x64 sqlite-better-trigram
+          npm i --cpu x64 sqlite3-fts5-html
+        working-directory: ./apps/desktop
+
+      - name: Build web app for desktop
+        run: npm run tx @notesnook/web:build:desktop
+
+      - name: Build Electron wrapper
+        run: npm run tx @notesnook/desktop:release
+
+      - name: Build AppImage and deb
+        run: >
+          yarn electron-builder --config=electron-builder.config.js
+          --linux AppImage:x64 deb:x64 -p never
+        working-directory: ./apps/desktop
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            apps/desktop/output/*.AppImage
+            apps/desktop/output/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  mac:
+    name: Build macOS (unsigned)
+    if: inputs['build-mac']
+    runs-on: macos-15
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: ./.github/actions/setup-node-with-cache
+
+      - name: Install setuptools
+        run: brew install python-setuptools
+
+      - name: Install packages
+        run: |
+          npm ci --ignore-scripts --prefer-offline --no-audit
+          npm run bootstrap -- --scope=desktop
+          npm run bootstrap -- --scope=web
+
+      - name: Install sqlite-better-trigram for arm64
+        run: |
+          npm i --cpu arm64 sqlite-better-trigram
+          npm i --cpu arm64 sqlite3-fts5-html
+        working-directory: ./apps/desktop
+
+      - name: Build web app for desktop
+        run: npm run tx @notesnook/web:build:desktop
+
+      - name: Build Electron wrapper
+        run: npm run tx @notesnook/desktop:release
+
+      # No Developer ID here: ad-hoc sign, which Apple silicon requires to
+      # launch, and disable the hardened runtime/notarization that ad-hoc
+      # signatures cannot satisfy.
+      - name: Build unsigned dmg
+        run: >
+          yarn electron-builder --config=electron-builder.config.js
+          --mac dmg --arm64 -p never
+          -c.mac.identity=-
+          -c.mac.hardenedRuntime=false
+          -c.mac.notarize=false
+        working-directory: ./apps/desktop
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-unsigned
+          path: apps/desktop/output/*.dmg
+          if-no-files-found: error
+          retention-days: 14
